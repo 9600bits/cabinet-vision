@@ -1,0 +1,10 @@
+# 仓库里统一存 LF，检出时由各人的 core.autocrlf 决定。
+# 不写这个的话，Windows 上提交会混入 CRLF，别人 clone 后满屏换行差异。
+* text=auto eol=lf
+
+# 二进制，别做换行转换
+*.ico binary
+*.png binary
+*.pdf binary
+*.xlsx binary
+*.db  binary

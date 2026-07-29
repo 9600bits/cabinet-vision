@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller 打包产物：build 是中间件，dist 是 44MB 的 exe，
+# 都能由 build.spec 重新生成，不进仓库
+build/
+dist/
+*.manifest
+
+# 与本项目无关的残留（没有 package.json，348MB）
+node_modules/
+
+# 本地数据库与备份。真实台账不该进仓库
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# 导出产物
+*.xlsx
+*.pdf
+*.png
+!assets/*.png
+
+# Claude Code 本地设置（含个人的命令白名单）
+.claude/settings.local.json
+
+# 本机专用的运维脚本。这台机器的网络屏蔽了 github.com:443，
+# 推送得走 API；那是环境问题，不该进公开仓库
+tools/push_via_api.py
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
