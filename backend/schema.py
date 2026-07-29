@@ -115,6 +115,38 @@ CREATE TABLE app_meta (
 );
 """,
     ),
+    (
+        2,
+        """
+CREATE TABLE device_type (
+    name        TEXT    PRIMARY KEY,
+    color       TEXT    NOT NULL DEFAULT '#595959',
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO device_type (name, color, sort_order) VALUES
+    ('交换机',   '#1668dc',  0),
+    ('路由器',   '#642ab5', 10),
+    ('防火墙',   '#d32029', 20),
+    ('负载均衡', '#08979c', 30),
+    ('服务器',   '#389e0d', 40),
+    ('存储',     '#5b8c00', 50),
+    ('配线架',   '#8c6b52', 60),
+    ('PDU',      '#d46b08', 70),
+    ('KVM',      '#c41d7f', 80),
+    ('光纤盒',   '#0958d9', 90),
+    ('其他',     '#595959', 999);
+
+-- 老库里的类型全部来自当时那份硬编码清单，正常都能对上。
+-- 但手工改过库的情况下可能有别的值，一并收进来，
+-- 免得升级后台账里的类型凭空变成「未知」。
+INSERT INTO device_type (name, color, sort_order)
+SELECT DISTINCT dev_type, '#595959', 500
+  FROM device
+ WHERE TRIM(COALESCE(dev_type, '')) <> ''
+   AND dev_type NOT IN (SELECT name FROM device_type);
+""",
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

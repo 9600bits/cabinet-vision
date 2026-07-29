@@ -125,7 +125,11 @@ class SeedService:
         return True
 
     def clear_all(self) -> None:
-        """清空业务数据，保留表结构。"""
+        """清空业务数据，保留表结构。
+
+        device_type 不在清空范围内：那是配置而不是台账，自己加的类型
+        不该因为清空数据就没了。要恢复内置清单用设置页的「恢复默认类型」。
+        """
         with self.db.transaction():
             for table in (
                 "device_link", "reservation", "device", "cabinet", "rack_row", "room"

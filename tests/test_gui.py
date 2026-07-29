@@ -15,11 +15,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PyQt6.QtCore import QEvent, QPoint, Qt, QTimer  # noqa: E402
 from PyQt6.QtGui import QFont  # noqa: E402
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from backend import Backend  # noqa: E402
+from backend.constants import (  # noqa: E402
+    DEFAULT_TYPE_COLOR,
+    DEVICE_TYPE_COLORS,
+    DEVICE_TYPES,
+    FALLBACK_DEVICE_TYPE,
+    type_color,
+)
 from backend.models import Device, DeviceQuery  # noqa: E402
 from frontend import theme  # noqa: E402
+from frontend.dialogs import DeviceDialog, DeviceTypeDialog  # noqa: E402
 from frontend.main_window import NAV_ITEMS, MainWindow  # noqa: E402
 from frontend.widgets.device_table import COLUMNS as DEVICE_COLUMNS  # noqa: E402
 from frontend.widgets.rack_export import export_pdf, export_png  # noqa: E402
@@ -279,6 +287,130 @@ def _check_drag_cleanup(page, view, app: QApplication) -> None:
         after <= before,
         f"5 个 QDrag 走 deleteLater 后仍剩 {after - before} 个",
     )
+
+
+def _check_device_types(window: MainWindow, app: QApplication) -> None:
+    """设置页加类型 -> 台账筛选下拉和机柜图配色都要跟上。
+
+    这条链路容易断：DEVICE_TYPES 是被十来处按值导入的模块级容器，
+    只能就地改；哪天改成重新绑定，这里的断言会立刻红。
+    """
+    window.go_to("settings")
+    app.processEvents()
+    settings = window.settings
+    backend = window.backend
+
+    rows_before = settings.types_table.rowCount()
+    _check("设置页：类型表已填充", rows_before >= 11, str(rows_before))
+    _check("设置页：类型表显示设备数",
+           settings.types_table.item(0, 2) is not None
+           and settings.types_table.item(0, 2).text().isdigit(),
+           "设备数列为空")
+    _check("设置页：类型表标出内置/自定义",
+           settings.types_table.item(0, 3).text() in ("内置", "自定义"),
+           settings.types_table.item(0, 3).text())
+
+    # 选中兜底类型时删除按钮要禁用
+    for row in range(settings.types_table.rowCount()):
+        if settings.types_table.item(row, 0).text() == FALLBACK_DEVICE_TYPE:
+            settings.types_table.selectRow(row)
+            app.processEvents()
+            break
+    _check("设置页：兜底类型不可删", not settings.delete_type_btn.isEnabled())
+    _check("设置页：兜底类型可编辑（改色）", settings.edit_type_btn.isEnabled())
+
+    # 先过一遍对话框自己的校验与保存，不走后端捷径
+    dlg = DeviceTypeDialog(backend, None, settings)
+    dlg.name_edit.setText("")
+    dlg._save()
+    # 离屏且未 exec 的对话框子控件 isVisible 恒为假，只能看文案
+    _check("类型框：空名被拦", "不能为空" in dlg.hint.text(), dlg.hint.text())
+    _check("类型框：空名不算保存", dlg.saved_name == "", dlg.saved_name)
+    dlg.name_edit.setText("交换机")
+    dlg._save()
+    _check("类型框：重名被拦并提示", "已经存在" in dlg.hint.text(), dlg.hint.text())
+    dlg.color_edit.setText("#13c2c2")
+    _check("类型框：手填配色生效", dlg._color == "#13c2c2", dlg._color)
+    dlg.name_edit.setText("动环监控")
+    dlg._save()
+    _check("类型框：合法输入保存成功", dlg.saved_name == "动环监控", dlg.saved_name)
+    _check("类型框：保存后对话框接受", dlg.result() == int(dlg.DialogCode.Accepted))
+    dlg.deleteLater()
+    app.processEvents()
+
+    settings.types_changed.emit()
+    app.processEvents()
+    settings.reload_types()
+    app.processEvents()
+    _check("设置页：新增后类型表增行",
+           settings.types_table.rowCount() == rows_before + 1,
+           f"{rows_before} -> {settings.types_table.rowCount()}")
+
+    names = [
+        settings.types_table.item(r, 0).text()
+        for r in range(settings.types_table.rowCount())
+    ]
+    _check("设置页：新类型出现在表里", "动环监控" in names, str(names))
+
+    # 台账页的类型筛选下拉必须跟着重建
+    window.go_to("devices")
+    app.processEvents()
+    combo_options = [box.text() for box in window.devices.type_combo._checks]
+    _check("台账页：筛选下拉含新类型", "动环监控" in combo_options, str(combo_options))
+    _check("台账页：筛选下拉不含已删类型",
+           all(name in DEVICE_TYPES for name in combo_options), str(combo_options))
+
+    # 新增设备对话框的下拉是每次打开重建的，也要有
+    dialog = DeviceDialog(backend, parent=window.devices)
+    dialog_types = [dialog.type_combo.itemText(i) for i in range(dialog.type_combo.count())]
+    _check("新增设备框：类型下拉含新类型", "动环监控" in dialog_types, str(dialog_types))
+    dialog.deleteLater()
+    app.processEvents()
+
+    # 配色要进注册表，机柜图才画得出来
+    _check("注册表：新类型有配色",
+           DEVICE_TYPE_COLORS.get("动环监控") == "#13c2c2",
+           str(DEVICE_TYPE_COLORS.get("动环监控")))
+    _check("type_color 认新类型", type_color("动环监控") == "#13c2c2", type_color("动环监控"))
+    _check("type_color 兜底认不出的类型",
+           type_color("根本不存在的类型") == DEFAULT_TYPE_COLOR,
+           type_color("根本不存在的类型"))
+
+    # 用新类型上架一台，机柜图能画出来且用的是新配色
+    cabinet_id = backend.list_cabinets()[0].id
+    slots = backend.free_slots(cabinet_id)
+    if slots:
+        dev = backend.save_device(
+            Device(id=0, name="GUI-ENV-01", dev_type="动环监控",
+                   cabinet_id=cabinet_id, u_start=slots[0].u_start, u_size=1)
+        )
+        window.go_to("cabinet")
+        window.cabinet.reload_all()
+        app.processEvents()
+        drawn = any(
+            d.dev_type == "动环监控"
+            for layout in window.cabinet._layouts
+            for d in layout.devices
+        )
+        _check("机柜视图：自定义类型设备能上架并绘制", drawn, "布局里找不到该设备")
+        legend = [
+            child.text()
+            for child in window.cabinet.legend.findChildren(QLabel)
+        ]
+        _check("机柜视图：图例含新类型",
+               any("动环监控" in text for text in legend), str(legend))
+        backend.delete_devices([dev.id])
+
+    # 删掉类型，下拉要收回去
+    backend.delete_device_type("动环监控")
+    window.settings.types_changed.emit()
+    app.processEvents()
+    window.go_to("devices")
+    app.processEvents()
+    combo_after = [box.text() for box in window.devices.type_combo._checks]
+    _check("台账页：删类型后下拉收回", "动环监控" not in combo_after, str(combo_after))
+    window.go_to("settings")
+    app.processEvents()
 
 
 def run(tmp: Path, app: QApplication) -> None:
@@ -568,6 +700,9 @@ def run(tmp: Path, app: QApplication) -> None:
 
     backup = backend.backup(tmp / "gui_backup.db")
     _check("设置页：备份可用", backup.exists() and backup.stat().st_size > 0)
+
+    # ---------- 设置页：设备类型管理 ----------
+    _check_device_types(window, app)
 
     # ---------- 页面间刷新联动 ----------
     window.go_to("devices")

@@ -2,12 +2,14 @@
 
 from .place_repo import PlaceRepository
 from .device_repo import DeviceRepository
+from .device_type_repo import DeviceTypeRepository
 from .reservation_repo import ReservationRepository
 from .link_repo import LinkRepository
 
 __all__ = [
     "PlaceRepository",
     "DeviceRepository",
+    "DeviceTypeRepository",
     "ReservationRepository",
     "LinkRepository",
 ]

@@ -24,7 +24,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
-from backend.constants import DEVICE_TYPE_COLORS
+from backend.constants import type_color
 from backend.models import CabinetLayout, Device, Reservation
 
 from .. import theme
@@ -326,7 +326,7 @@ class RackView(QWidget):
         for d in self._layout.racked_devices:
             assert d.u_start is not None
             rect = self._u_rect(d.u_start, d.u_size)
-            color = QColor(DEVICE_TYPE_COLORS.get(d.dev_type, "#595959"))
+            color = QColor(type_color(d.dev_type))
             color.setAlpha(_status_alpha(d.status))
             painter.setBrush(QBrush(color))
             if d.status == "故障":
@@ -527,7 +527,7 @@ class RackView(QWidget):
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor(DEVICE_TYPE_COLORS.get(device.dev_type, "#595959"))
+        color = QColor(type_color(device.dev_type))
         color.setAlpha(215)
         painter.setBrush(QBrush(color))
         painter.setPen(Qt.PenStyle.NoPen)

@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from typing import Sequence
+
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -15,6 +17,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QTableView,
@@ -38,7 +41,7 @@ class _MultiSelectCombo(QComboBox):
 
     changed = pyqtSignal()
 
-    def __init__(self, options: tuple[str, ...], placeholder: str, parent=None) -> None:
+    def __init__(self, options: Sequence[str], placeholder: str, parent=None) -> None:
         super().__init__(parent)
         self._placeholder = placeholder
         self._checks: list[QCheckBox] = []
@@ -46,18 +49,31 @@ class _MultiSelectCombo(QComboBox):
         self.lineEdit().setReadOnly(True)
         self.lineEdit().setPlaceholderText(placeholder)
 
-        from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+        from PyQt6.QtWidgets import QListWidget
 
         self._list = QListWidget()
+        self.setModel(self._list.model())
+        self.setView(self._list)
+        self.set_options(options)
+
+    def set_options(self, options: Sequence[str]) -> None:
+        """重建选项，尽量保住已勾选的项。
+
+        设备类型可以在设置页增删，所以这个下拉不是建好就不变的。
+        """
+        checked = set(self.selected())
+        self._list.clear()
+        self._checks.clear()
         for option in options:
             item = QListWidgetItem()
             self._list.addItem(item)
             box = QCheckBox(option)
+            box.setChecked(option in checked)
             box.stateChanged.connect(self._on_toggle)
             self._list.setItemWidget(item, box)
             self._checks.append(box)
-        self.setModel(self._list.model())
-        self.setView(self._list)
+        selected = self.selected()
+        self.lineEdit().setText("、".join(selected) if selected else "")
 
     def _on_toggle(self) -> None:
         selected = self.selected()
@@ -247,7 +263,14 @@ class DevicesPage(QWidget):
 
     def reload_all(self) -> None:
         self._load_places()
+        self.refresh_device_types()
         self.reload()
+
+    def refresh_device_types(self) -> None:
+        """类型清单在设置页改过后重建筛选下拉。"""
+        self.type_combo.blockSignals(True)
+        self.type_combo.set_options(DEVICE_TYPES)
+        self.type_combo.blockSignals(False)
 
     def _load_places(self) -> None:
         current = self.room_combo.currentData()

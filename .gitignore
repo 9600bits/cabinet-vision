@@ -6,9 +6,13 @@ __pycache__/
 venv/
 
 # PyInstaller 打包产物：build 是中间件，dist 是 44MB 的 exe，
-# 都能由 build.spec 重新生成，不进仓库
+# 都能由 build.spec 重新生成，不进仓库。
+# *_release 是发版时用的另一套输出目录 —— dist 里的 exe 正在运行时
+# 会被锁住删不掉，只好换个 --distpath 重新打
 build/
 dist/
+build_release/
+dist_release/
 *.manifest
 
 # 与本项目无关的残留（没有 package.json，348MB）

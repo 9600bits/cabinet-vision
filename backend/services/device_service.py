@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import re
 
-from ..constants import DEVICE_STATUSES, DEVICE_TYPES, LINK_TYPES
+from ..constants import (
+    DEVICE_STATUSES,
+    DEVICE_TYPES,
+    FALLBACK_DEVICE_TYPE,
+    LINK_TYPES,
+)
 from ..database import Database
 from ..errors import ConflictError, NotFoundError, ValidationError
 from ..models import Device, DeviceLink, DeviceQuery, IncomingLink
@@ -47,8 +52,9 @@ class DeviceService:
             raise ValidationError("设备名不能为空")
         d.name = d.name.strip()
         d.u_size = max(1, int(d.u_size or 1))
+        # DEVICE_TYPES 是运行时注册表（库里的清单），用户自建的类型也算合法
         if d.dev_type not in DEVICE_TYPES:
-            d.dev_type = "其他"
+            d.dev_type = FALLBACK_DEVICE_TYPE
         if d.status not in DEVICE_STATUSES:
             d.status = "在用"
         # 没有机柜就不该有 U 位，避免出现"没柜子却有位置"的脏数据

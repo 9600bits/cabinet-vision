@@ -234,7 +234,10 @@ class DeviceDialog(QDialog):
                 self.cabinet_combo.setCurrentIndex(index)
         if u_start:
             self.u_start_spin.setValue(u_start)
-        self.type_combo.setCurrentText("交换机")
+        # 交换机是最常录的，默认选它。用户可能把它删了，所以先看在不在
+        index = self.type_combo.findText("交换机")
+        if index >= 0:
+            self.type_combo.setCurrentIndex(index)
 
     def _load_device(self, device_id: int) -> None:
         try:

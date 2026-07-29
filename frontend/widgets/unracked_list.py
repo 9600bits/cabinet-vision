@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from backend.constants import DEVICE_TYPE_COLORS
+from backend.constants import type_color
 from backend.models import Device
 
 from .. import theme
@@ -72,7 +72,7 @@ class _DragList(QListWidget):
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor(DEVICE_TYPE_COLORS.get(device.dev_type, "#595959"))
+        color = QColor(type_color(device.dev_type))
         color.setAlpha(215)
         painter.setBrush(QBrush(color))
         painter.setPen(Qt.PenStyle.NoPen)

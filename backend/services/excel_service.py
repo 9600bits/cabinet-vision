@@ -15,7 +15,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from ..constants import DEVICE_STATUSES, DEVICE_TYPES
+from ..constants import DEVICE_STATUSES, DEVICE_TYPES, FALLBACK_DEVICE_TYPE
 from ..database import Database
 from ..errors import BackendError
 from ..models import (
@@ -385,9 +385,11 @@ class ExcelService:
         options: ImportOptions,
         result: ImportResult,
     ) -> None:
-        dev_type = _as_text(record.get("dev_type")) or "其他"
+        # DEVICE_TYPES 是运行时注册表，用户自建的类型也在里面，
+        # 所以导入能认出自定义类型；认不出的才归兜底
+        dev_type = _as_text(record.get("dev_type")) or FALLBACK_DEVICE_TYPE
         if dev_type not in DEVICE_TYPES:
-            dev_type = "其他"
+            dev_type = FALLBACK_DEVICE_TYPE
         status = _as_text(record.get("status")) or "在用"
         if status not in DEVICE_STATUSES:
             status = "在用"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -9,6 +10,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend import Backend, BackendError  # noqa: E402
+from backend.constants import (  # noqa: E402
+    DEVICE_TYPE_COLORS,
+    DEVICE_TYPES,
+    FALLBACK_DEVICE_TYPE,
+)
 from backend.models import (  # noqa: E402
     Cabinet,
     Device,
@@ -19,6 +25,7 @@ from backend.models import (  # noqa: E402
     Reservation,
     Room,
 )
+from backend.schema import MIGRATIONS  # noqa: E402
 from openpyxl import Workbook  # noqa: E402
 
 PASSED: list[str] = []
@@ -498,8 +505,112 @@ def run(tmp: Path) -> None:
 
     expect_error("复制不存在的设备报错", lambda: api.copy_of_device(999999))
 
+    # ---------- 设备类型自定义 ----------
+    types = api.list_device_types()
+    check("内置类型 11 种", len(types) == 11, str(len(types)))
+    check("类型清单已同步到注册表",
+          [t.name for t in types] == list(DEVICE_TYPES),
+          f"{[t.name for t in types]} vs {list(DEVICE_TYPES)}")
+    check("兜底类型在清单里", FALLBACK_DEVICE_TYPE in DEVICE_TYPES)
+    check("内置类型标记为内置", all(t.builtin for t in types))
+
+    added_type = api.create_device_type("动环监控", "#13c2c2")
+    check("新增类型返回对象", added_type.name == "动环监控", added_type.name)
+    check("新增类型不算内置", not added_type.builtin)
+    check("新增后进注册表", "动环监控" in DEVICE_TYPES, str(DEVICE_TYPES))
+    check("新增后配色进注册表",
+          DEVICE_TYPE_COLORS.get("动环监控") == "#13c2c2",
+          str(DEVICE_TYPE_COLORS.get("动环监控")))
+    check("新类型排在兜底类型前",
+          DEVICE_TYPES.index("动环监控") < DEVICE_TYPES.index(FALLBACK_DEVICE_TYPE),
+          str(DEVICE_TYPES))
+
+    # 自定义类型必须能真的存进台账，不能被归到「其他」
+    env_dev = api.save_device(new_device("ENV-01", dev_type="动环监控"))
+    check("设备可用自定义类型", env_dev.dev_type == "动环监控", env_dev.dev_type)
+    check("自定义类型算进设备数",
+          next(t.device_count for t in api.list_device_types() if t.name == "动环监控") == 1)
+
+    # 改名要连带刷台账，否则设备的类型会变成清单外的悬空值
+    renamed, moved = api.update_device_type("动环监控", "环境监控", "#08979c")
+    check("改名返回新名", renamed.name == "环境监控", renamed.name)
+    check("改名同步台账设备数", moved == 1, str(moved))
+    check("改名后设备类型跟着改",
+          api.get_device(env_dev.id).dev_type == "环境监控",
+          api.get_device(env_dev.id).dev_type)
+    check("旧名字从注册表移除", "动环监控" not in DEVICE_TYPES, str(DEVICE_TYPES))
+    check("改名后配色同步", DEVICE_TYPE_COLORS.get("环境监控") == "#08979c")
+
+    _, no_move = api.update_device_type("环境监控", "环境监控", "#eb2f96")
+    check("只改色不动台账", no_move == 0, str(no_move))
+    check("只改色配色生效", DEVICE_TYPE_COLORS.get("环境监控") == "#eb2f96")
+
+    # 筛选认自定义类型
+    check("按自定义类型筛选",
+          len(api.query_devices(DeviceQuery(dev_types=("环境监控",)))) == 1)
+
+    # 删类型：设备归兜底，不能连着设备一起删
+    affected = api.delete_device_type("环境监控")
+    check("删类型返回受影响设备数", affected == 1, str(affected))
+    check("删类型后设备归兜底",
+          api.get_device(env_dev.id).dev_type == FALLBACK_DEVICE_TYPE,
+          api.get_device(env_dev.id).dev_type)
+    check("删类型不删设备", api.get_device(env_dev.id).name == "ENV-01")
+    check("删后从注册表移除", "环境监控" not in DEVICE_TYPES, str(DEVICE_TYPES))
+
+    expect_error("兜底类型不能删",
+                 lambda: api.delete_device_type(FALLBACK_DEVICE_TYPE), "兜底")
+    expect_error("兜底类型不能改名",
+                 lambda: api.update_device_type(FALLBACK_DEVICE_TYPE, "杂项", "#595959"),
+                 "兜底")
+    expect_error("类型不能重名", lambda: api.create_device_type("交换机"), "已经存在")
+    expect_error("类型名不能为空", lambda: api.create_device_type("   "), "不能为空")
+    expect_error("类型名不能过长",
+                 lambda: api.create_device_type("超过十六个字符的类型名称肯定要被拦下来"),
+                 "最多")
+    expect_error("类型名不能含斜杠", lambda: api.create_device_type("交换机/路由器"), "「/」")
+    expect_error("配色必须是十六进制", lambda: api.create_device_type("测试类型", "红色"), "#RRGGBB")
+    expect_error("改不存在的类型报错",
+                 lambda: api.update_device_type("不存在的类型", "新名", "#595959"), "不存在")
+    expect_error("删不存在的类型报错", lambda: api.delete_device_type("不存在的类型"), "不存在")
+
+    # 兜底类型改色是允许的
+    api.update_device_type(FALLBACK_DEVICE_TYPE, FALLBACK_DEVICE_TYPE, "#8c8c8c")
+    check("兜底类型可以改色", DEVICE_TYPE_COLORS.get(FALLBACK_DEVICE_TYPE) == "#8c8c8c")
+
+    # 删掉内置类型也能恢复
+    api.delete_device_type("KVM")
+    check("内置类型可删", "KVM" not in DEVICE_TYPES, str(DEVICE_TYPES))
+    restored = api.restore_default_device_types()
+    check("恢复默认补回缺失项", restored == 1, str(restored))
+    check("恢复后 KVM 回来了", "KVM" in DEVICE_TYPES, str(DEVICE_TYPES))
+    check("恢复默认不重复补", api.restore_default_device_types() == 0)
+
+    # 自定义类型不该因为恢复默认或清空数据消失
+    api.create_device_type("自定义留存", "#722ed1")
+    api.restore_default_device_types()
+    check("恢复默认保留自定义类型", "自定义留存" in DEVICE_TYPES, str(DEVICE_TYPES))
+
+    # 导入时认自定义类型，认不出的才归兜底
+    type_xlsx = tmp / "custom_type.xlsx"
+    wb2 = Workbook()
+    ws2 = wb2.active
+    ws2.append(["机房", "机柜编号", "设备名", "设备类型"])
+    ws2.append(["示例机房", "A01", "IMP-CUSTOM", "自定义留存"])
+    ws2.append(["示例机房", "A01", "IMP-UNKNOWN", "查无此类型"])
+    wb2.save(type_xlsx)
+    api.import_devices(type_xlsx, ImportOptions(dry_run=False, create_missing_places=True))
+    imported = {d.name: d.dev_type for d in api.query_devices(DeviceQuery(keyword="IMP-"))}
+    check("导入认自定义类型",
+          imported.get("IMP-CUSTOM") == "自定义留存", str(imported))
+    check("导入认不出的归兜底",
+          imported.get("IMP-UNKNOWN") == FALLBACK_DEVICE_TYPE, str(imported))
+
     # ---------- 清空 ----------
     api.clear_all_data()
+    check("清空数据保留类型配置",
+          "自定义留存" in [t.name for t in api.list_device_types()],
+          str([t.name for t in api.list_device_types()]))
     cleared = api.stats()
     check(
         "清空后所有表为空",
@@ -512,6 +623,36 @@ def run(tmp: Path) -> None:
     api.close()
 
 
+def run_migration(tmp: Path) -> None:
+    """老库（v1，没有 device_type 表）升级后类型清单要对得上。"""
+    old = tmp / "legacy.db"
+    conn = sqlite3.connect(str(old))
+    conn.executescript(MIGRATIONS[0][1])
+    conn.execute("PRAGMA user_version = 1")
+    conn.execute("INSERT INTO device (name, dev_type, u_size) VALUES ('L-SW1','交换机',1)")
+    # 手工改过库的情况：台账里有当年硬编码清单之外的类型
+    conn.execute("INSERT INTO device (name, dev_type, u_size) VALUES ('L-TAPE','磁带库',2)")
+    conn.commit()
+    conn.close()
+
+    api = Backend(old, seed_demo=False)
+    names = [t.name for t in api.list_device_types()]
+    check("老库升级后建出类型清单", len(names) >= 11, str(names))
+    check("老库里清单外的类型被收进来", "磁带库" in names, str(names))
+    check("升级不改台账里的类型",
+          api.get_device(2).dev_type == "磁带库", api.get_device(2).dev_type)
+    counts = {t.name: t.device_count for t in api.list_device_types()}
+    check("升级后设备数统计正确",
+          counts.get("交换机") == 1 and counts.get("磁带库") == 1, str(counts))
+
+    # 切库要把注册表换成新库的清单，不能留着上一个库的自定义类型
+    fresh = tmp / "fresh.db"
+    api.switch_database(fresh)
+    check("切库后注册表重灌", "磁带库" not in DEVICE_TYPES, str(DEVICE_TYPES))
+    check("切库后内置类型在位", "交换机" in DEVICE_TYPES, str(DEVICE_TYPES))
+    api.close()
+
+
 def main() -> int:
     # Windows 上 WAL 附属文件偶尔来不及释放，清理失败不该影响结论
     with tempfile.TemporaryDirectory(
@@ -519,6 +660,7 @@ def main() -> int:
     ) as folder:
         try:
             run(Path(folder))
+            run_migration(Path(folder))
         except Exception as exc:  # noqa: BLE001
             import traceback
 

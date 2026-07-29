@@ -304,6 +304,21 @@ class ImportOptions:
 
 
 @dataclass(slots=True)
+class DeviceType(Dto):
+    """一个设备类型。name 就是主键，台账里的 dev_type 存的是这个名字。
+
+    device_count 是当前用着这个类型的设备数，只在列表查询时填，
+    用来在设置页提示「删了会影响多少台」。
+    """
+
+    name: str
+    color: str = "#595959"
+    sort_order: int = 0
+    device_count: int = 0
+    builtin: bool = False
+
+
+@dataclass(slots=True)
 class Stats(Dto):
     rooms: int = 0
     rows: int = 0

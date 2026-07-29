@@ -17,6 +17,7 @@ from .models import (
     Device,
     DeviceLink,
     DeviceQuery,
+    DeviceType,
     ImportOptions,
     ImportResult,
     IncomingLink,
@@ -30,6 +31,7 @@ from .models import (
 from .services import (
     CapacityService,
     DeviceService,
+    DeviceTypeService,
     ExcelService,
     OccupancyService,
     PlaceService,
@@ -49,10 +51,14 @@ class Backend:
     def _wire(self) -> None:
         self.places = PlaceService(self._db)
         self.devices = DeviceService(self._db)
+        self.device_types = DeviceTypeService(self._db)
         self.capacity = CapacityService(self._db)
         self.excel = ExcelService(self._db)
         self.occupancy = OccupancyService(self._db)
         self.seed = SeedService(self._db)
+        # 设备类型清单是库里的数据，换库就得重新灌进 constants，
+        # 否则界面还在用上一个库的类型
+        self.device_types.bootstrap()
 
     # ---------- 生命周期与库维护 ----------
 
@@ -174,6 +180,27 @@ class Backend:
 
     def field_suggestions(self, column: str) -> list[str]:
         return self.devices.suggestions(column)
+
+    # ---------- 设备类型 ----------
+
+    def list_device_types(self, with_counts: bool = True) -> list[DeviceType]:
+        return self.device_types.list_types(with_counts)
+
+    def create_device_type(self, name: str, color: str = "") -> DeviceType:
+        return self.device_types.create(name, color)
+
+    def update_device_type(
+        self, old_name: str, new_name: str, color: str
+    ) -> tuple[DeviceType, int]:
+        """改名 / 改色。返回 (新类型, 跟着改名的设备数)。"""
+        return self.device_types.update(old_name, new_name, color)
+
+    def delete_device_type(self, name: str) -> int:
+        """删类型，用着它的设备归到「其他」。返回受影响的设备数。"""
+        return self.device_types.delete(name)
+
+    def restore_default_device_types(self) -> int:
+        return self.device_types.restore_defaults()
 
     # ---------- 连接关系 ----------
 

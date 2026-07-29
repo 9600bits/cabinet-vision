@@ -137,8 +137,17 @@ class MainWindow(QMainWindow):
             page.data_changed.connect(self._mark_all_stale)
         self.settings.data_changed.connect(self._mark_all_stale)
         self.settings.database_switched.connect(self._on_database_switched)
+        self.settings.types_changed.connect(self._on_types_changed)
 
         self._stale: set[str] = set(self._pages)
+
+    def _on_types_changed(self) -> None:
+        """设备类型清单变了：重建类型下拉，配色相关的视图也要重画。
+
+        后端已经把 constants 里的注册表刷过了，这里只管界面。
+        """
+        self.devices.refresh_device_types()
+        self._mark_all_stale()
 
     def _mark_all_stale(self) -> None:
         """数据变了就把所有页面标记为待刷新，切过去时才真正查库。"""

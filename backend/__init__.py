@@ -7,9 +7,11 @@
 from .api import Backend
 from .database import Database, default_db_path
 from .errors import BackendError, ConflictError, NotFoundError, ValidationError
+from .models import DeviceType
 
 __all__ = [
     "Backend",
+    "DeviceType",
     "Database",
     "default_db_path",
     "BackendError",
