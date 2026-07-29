@@ -137,7 +137,10 @@ class MainWindow(QMainWindow):
             page.data_changed.connect(self._mark_all_stale)
         self.settings.data_changed.connect(self._mark_all_stale)
         self.settings.database_switched.connect(self._on_database_switched)
-        self.settings.types_changed.connect(self._on_types_changed)
+        # 类型清单能在三个地方改：设置页的类型表、以及设备对话框
+        # 和批量修改里那个「＋ 新增类型…」
+        for page in (self.settings, self.devices, self.cabinet):
+            page.types_changed.connect(self._on_types_changed)
 
         self._stale: set[str] = set(self._pages)
 

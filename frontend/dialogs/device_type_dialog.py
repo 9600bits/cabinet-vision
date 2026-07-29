@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -21,8 +22,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from PyQt6.QtCore import pyqtSignal
+
 from backend import Backend, BackendError
-from backend.constants import DEFAULT_TYPE_COLOR, FALLBACK_DEVICE_TYPE
+from backend.constants import DEFAULT_TYPE_COLOR, DEVICE_TYPES, FALLBACK_DEVICE_TYPE
 from backend.models import DeviceType
 
 from ..widgets.common import Hint, muted
@@ -220,3 +223,82 @@ class DeviceTypeDialog(QDialog):
             self._fail(str(exc))
             return
         self.accept()
+
+
+# 下拉里那一项「就地加类型」的入口文字。用 userData 认它，不靠比文字
+_ADD_MARKER = "__add_device_type__"
+
+
+class DeviceTypeCombo(QComboBox):
+    """设备类型下拉，末尾带一个「＋ 新增类型…」。
+
+    为什么不只放在设置页：录设备的时候人就在这个框里，遇到清单里
+    没有的类型，让他退出去、跑到设置页加完、再回来重填一遍，
+    这个流程没人会走。所以就地能加。
+    """
+
+    types_changed = pyqtSignal()
+
+    def __init__(
+        self,
+        backend: Backend,
+        parent: QWidget | None = None,
+        keep_option: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.backend = backend
+        # 批量修改那边要一个「保持原值」占位，普通新增不需要
+        self._keep_option = keep_option
+        self._last_index = 0
+        self.reload_types()
+        # activated 只在用户点选时发，programmatic 改动不发；
+        # 用 currentIndexChanged 会在重建下拉时自己触发自己
+        self.activated.connect(self._on_activated)
+
+    # ---------- 选项 ----------
+
+    def reload_types(self, select: str = "") -> None:
+        """按当前注册表重建选项。select 指定重建后选中谁。"""
+        keep = select or self.current_type()
+        self.blockSignals(True)
+        self.clear()
+        if self._keep_option:
+            self.addItem(self._keep_option, "")
+        for name in DEVICE_TYPES:
+            self.addItem(name, name)
+        self.insertSeparator(self.count())
+        self.addItem("＋ 新增类型…", _ADD_MARKER)
+        self.blockSignals(False)
+        self.set_current_type(keep)
+
+    def current_type(self) -> str:
+        """当前选中的类型名。「保持原值」和入口项都返回空串。"""
+        data = self.currentData()
+        if data in (None, "", _ADD_MARKER):
+            return ""
+        return str(data)
+
+    def set_current_type(self, name: str) -> None:
+        index = self.findData(name) if name else -1
+        if index < 0:
+            index = 0
+        self.setCurrentIndex(index)
+        self._last_index = index
+
+    # ---------- 就地新增 ----------
+
+    def _on_activated(self, index: int) -> None:
+        if self.itemData(index) != _ADD_MARKER:
+            self._last_index = index
+            return
+
+        # 入口项本身不是一个可选的值，弹框前先把选择退回去，
+        # 这样用户取消时下拉不会停在「＋ 新增类型…」上
+        self.setCurrentIndex(self._last_index)
+
+        dialog = DeviceTypeDialog(self.backend, None, self)
+        if dialog.exec() != int(dialog.DialogCode.Accepted):
+            return
+        # 新加的类型直接选上 —— 用户加它就是为了用它
+        self.reload_types(select=dialog.saved_name)
+        self.types_changed.emit()

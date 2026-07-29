@@ -27,7 +27,11 @@ from backend.constants import (  # noqa: E402
 )
 from backend.models import Device, DeviceQuery  # noqa: E402
 from frontend import theme  # noqa: E402
-from frontend.dialogs import DeviceDialog, DeviceTypeDialog  # noqa: E402
+from frontend.dialogs import (  # noqa: E402
+    BulkEditDialog,
+    DeviceDialog,
+    DeviceTypeDialog,
+)
 from frontend.main_window import NAV_ITEMS, MainWindow  # noqa: E402
 from frontend.widgets.device_table import COLUMNS as DEVICE_COLUMNS  # noqa: E402
 from frontend.widgets.rack_export import export_pdf, export_png  # noqa: E402
@@ -287,6 +291,108 @@ def _check_drag_cleanup(page, view, app: QApplication) -> None:
         after <= before,
         f"5 个 QDrag 走 deleteLater 后仍剩 {after - before} 个",
     )
+
+
+def _check_inline_add_type(window: MainWindow, app: QApplication) -> None:
+    """设备对话框的类型下拉里就地加类型。
+
+    这是最常用的入口：录设备时发现类型不在清单里，当场加完接着录，
+    不用退出去跑设置页。所以这条路要真跑一遍，不能只测设置页。
+    """
+    backend = window.backend
+    dialog = DeviceDialog(backend, parent=window.devices)
+    combo = dialog.type_combo
+
+    last = combo.count() - 1
+    _check("类型下拉：末尾是新增入口",
+           combo.itemData(last) == "__add_device_type__",
+           f"{combo.itemText(last)} / {combo.itemData(last)}")
+    separator = combo.itemData(
+        last - 1, Qt.ItemDataRole.AccessibleDescriptionRole
+    )
+    _check("类型下拉：入口前有分隔线，跟真实类型区分开",
+           separator == "separator", str(separator))
+
+    # 入口项不是一个真实的类型值
+    combo.setCurrentIndex(last)
+    _check("类型下拉：入口项不当成类型值", combo.current_type() == "",
+           combo.current_type())
+    combo.set_current_type("交换机")
+    _check("类型下拉：能选回正常类型", combo.current_type() == "交换机",
+           combo.current_type())
+
+    before = combo.count()
+
+    # 点「＋ 新增类型…」会弹模态框，测试里不能阻塞：
+    # 用定时器在框弹出后填好字段并确认
+    def fill_and_accept() -> None:
+        for widget in app.topLevelWidgets():
+            if isinstance(widget, DeviceTypeDialog) and widget.isVisible():
+                widget.name_edit.setText("动环主机")
+                widget._set_color("#722ed1")
+                widget._save()
+                return
+
+    QTimer.singleShot(120, fill_and_accept)
+    combo._on_activated(last)          # 走真实入口
+    app.processEvents()
+
+    _check("就地新增：类型已落库",
+           "动环主机" in [t.name for t in backend.list_device_types()],
+           str([t.name for t in backend.list_device_types()]))
+    _check("就地新增：下拉多一项", combo.count() == before + 1,
+           f"{before} -> {combo.count()}")
+    _check("就地新增：新类型自动选中", combo.current_type() == "动环主机",
+           combo.current_type())
+    _check("就地新增：配色进注册表",
+           DEVICE_TYPE_COLORS.get("动环主机") == "#722ed1",
+           str(DEVICE_TYPE_COLORS.get("动环主机")))
+    _check("就地新增：对话框标记了类型变更", dialog.types_changed)
+
+    # 用这个新类型存一台设备，端到端确认能落库
+    dialog.name_edit.setText("GUI-DH-01")
+    dialog._on_save()
+    saved = dialog.saved_device
+    _check("就地新增：能用新类型直接存设备",
+           saved is not None and saved.dev_type == "动环主机",
+           str(saved.dev_type if saved else None))
+    if saved is not None:
+        backend.delete_devices([saved.id])
+    dialog.deleteLater()
+    app.processEvents()
+
+    # 取消新增时下拉不该停在入口项上
+    dialog2 = DeviceDialog(backend, parent=window.devices)
+    combo2 = dialog2.type_combo
+    combo2.set_current_type("服务器")
+    QTimer.singleShot(120, lambda: [
+        w.reject() for w in app.topLevelWidgets()
+        if isinstance(w, DeviceTypeDialog) and w.isVisible()
+    ])
+    combo2._on_activated(combo2.count() - 1)
+    app.processEvents()
+    _check("就地新增：取消后退回原选项", combo2.current_type() == "服务器",
+           combo2.current_type())
+    _check("就地新增：取消不算类型变更", not dialog2.types_changed)
+    dialog2.deleteLater()
+    app.processEvents()
+
+    # 批量修改那边同样有入口，且「保持原值」仍然是空值
+    bulk = BulkEditDialog(backend, [1], parent=window.devices)
+    _check("批量修改：保持原值不当成类型", bulk.type_combo.current_type() == "",
+           bulk.type_combo.current_type())
+    _check("批量修改：也有新增入口",
+           bulk.type_combo.itemData(bulk.type_combo.count() - 1)
+           == "__add_device_type__")
+    bulk.type_combo.set_current_type("动环主机")
+    _check("批量修改：能选到就地加的类型",
+           bulk.type_combo.current_type() == "动环主机",
+           bulk.type_combo.current_type())
+    bulk.deleteLater()
+    app.processEvents()
+
+    backend.delete_device_type("动环主机")
+    window.devices.refresh_device_types()
 
 
 def _check_device_types(window: MainWindow, app: QApplication) -> None:
@@ -703,6 +809,9 @@ def run(tmp: Path, app: QApplication) -> None:
 
     # ---------- 设置页：设备类型管理 ----------
     _check_device_types(window, app)
+
+    # ---------- 设备框里就地新增类型 ----------
+    _check_inline_add_type(window, app)
 
     # ---------- 页面间刷新联动 ----------
     window.go_to("devices")

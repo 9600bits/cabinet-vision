@@ -24,10 +24,11 @@ from PyQt6.QtWidgets import (
 )
 
 from backend import Backend, BackendError
-from backend.constants import DEVICE_STATUSES, DEVICE_TYPES
+from backend.constants import DEVICE_STATUSES
 from backend.models import Device
 
 from ..widgets.common import Hint, muted
+from .device_type_dialog import DeviceTypeCombo
 from .links_panel import LinksPanel
 
 _NO_CABINET = -1
@@ -52,6 +53,9 @@ class DeviceDialog(QDialog):
         # 字段用源设备预填，改几处就能存
         self.copy_from = copy_from
         self.saved_device: Device | None = None
+        # 在这个框里加过类型。调用方据此刷新自己的类型下拉 ——
+        # 就算最后点了取消，类型也已经落库了
+        self.types_changed = False
 
         if device_id:
             title = "编辑设备"
@@ -113,8 +117,9 @@ class DeviceDialog(QDialog):
 
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("SW-CORE-01")
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(DEVICE_TYPES)
+        # 下拉自带「＋ 新增类型…」，清单里没有的类型不用退出去加
+        self.type_combo = DeviceTypeCombo(self.backend)
+        self.type_combo.types_changed.connect(self._on_types_changed)
         self.status_combo = QComboBox()
         self.status_combo.addItems(DEVICE_STATUSES)
 
@@ -234,10 +239,8 @@ class DeviceDialog(QDialog):
                 self.cabinet_combo.setCurrentIndex(index)
         if u_start:
             self.u_start_spin.setValue(u_start)
-        # 交换机是最常录的，默认选它。用户可能把它删了，所以先看在不在
-        index = self.type_combo.findText("交换机")
-        if index >= 0:
-            self.type_combo.setCurrentIndex(index)
+        # 交换机是最常录的，默认选它。用户可能把它删了，那就保持第一项
+        self.type_combo.set_current_type("交换机")
 
     def _load_device(self, device_id: int) -> None:
         try:
@@ -255,7 +258,7 @@ class DeviceDialog(QDialog):
         是同一套字段，不用两份填充代码。
         """
         self.name_edit.setText(device.name)
-        self.type_combo.setCurrentText(device.dev_type)
+        self.type_combo.set_current_type(device.dev_type)
         self.status_combo.setCurrentText(device.status)
         index = self.cabinet_combo.findData(device.cabinet_id or _NO_CABINET)
         self.cabinet_combo.setCurrentIndex(max(0, index))
@@ -275,6 +278,9 @@ class DeviceDialog(QDialog):
                             (self.warranty_date, device.warranty_end)):
             if value:
                 edit.setDate(QDate.fromString(value, "yyyy-MM-dd"))
+
+    def _on_types_changed(self) -> None:
+        self.types_changed = True
 
     def _on_cabinet_changed(self) -> None:
         has_cabinet = self.cabinet_combo.currentData() != _NO_CABINET
@@ -312,7 +318,7 @@ class DeviceDialog(QDialog):
             cabinet_id=None if cabinet_id == _NO_CABINET else int(cabinet_id),
             u_start=None if u_start <= 0 else u_start,
             u_size=self.u_size_spin.value(),
-            dev_type=self.type_combo.currentText(),
+            dev_type=self.type_combo.current_type(),
             status=self.status_combo.currentText(),
             model=self.model_edit.text().strip() or None,
             vendor=self.vendor_edit.text().strip() or None,

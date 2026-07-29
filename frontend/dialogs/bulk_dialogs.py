@@ -13,9 +13,10 @@ from PyQt6.QtWidgets import (
 )
 
 from backend import Backend, BackendError
-from backend.constants import DEVICE_STATUSES, DEVICE_TYPES
+from backend.constants import DEVICE_STATUSES
 
 from ..widgets.common import Hint, muted
+from .device_type_dialog import DeviceTypeCombo
 
 _KEEP = "（保持原值）"
 
@@ -28,6 +29,7 @@ class BulkEditDialog(QDialog):
         self.backend = backend
         self.device_ids = device_ids
         self.changed = 0
+        self.types_changed = False
 
         self.setWindowTitle(f"批量修改 {len(device_ids)} 台设备")
         self.setMinimumWidth(440)
@@ -44,9 +46,8 @@ class BulkEditDialog(QDialog):
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(9)
 
-        self.type_combo = QComboBox()
-        self.type_combo.addItem(_KEEP)
-        self.type_combo.addItems(DEVICE_TYPES)
+        self.type_combo = DeviceTypeCombo(backend, keep_option=_KEEP)
+        self.type_combo.types_changed.connect(self._on_types_changed)
         self.status_combo = QComboBox()
         self.status_combo.addItem(_KEEP)
         self.status_combo.addItems(DEVICE_STATUSES)
@@ -79,10 +80,13 @@ class BulkEditDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
+    def _on_types_changed(self) -> None:
+        self.types_changed = True
+
     def _apply(self) -> None:
         patch: dict[str, object] = {}
-        if self.type_combo.currentText() != _KEEP:
-            patch["dev_type"] = self.type_combo.currentText()
+        if self.type_combo.current_type():
+            patch["dev_type"] = self.type_combo.current_type()
         if self.status_combo.currentText() != _KEEP:
             patch["status"] = self.status_combo.currentText()
         for key, widget in (

@@ -94,6 +94,8 @@ class _MultiSelectCombo(QComboBox):
 class DevicesPage(QWidget):
     data_changed = pyqtSignal()
     cabinet_requested = pyqtSignal(int)
+    # 在设备对话框里现加了类型，别的页面（设置页的类型表）也要跟上
+    types_changed = pyqtSignal()
 
     def __init__(self, backend: Backend, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -401,7 +403,12 @@ class DevicesPage(QWidget):
 
     def _open_dialog(self, device_id: int | None) -> None:
         dialog = DeviceDialog(self.backend, device_id=device_id, parent=self)
-        if dialog.exec():
+        accepted = dialog.exec()
+        # 类型可能是在对话框里现加的，取消保存也已经落库了
+        if dialog.types_changed:
+            self.refresh_device_types()
+            self.types_changed.emit()
+        if accepted:
             self.reload()
             self.data_changed.emit()
 
@@ -416,7 +423,11 @@ class DevicesPage(QWidget):
             QMessageBox.warning(self, "复制失败", str(exc))
             return
         dialog = DeviceDialog(self.backend, copy_from=draft, parent=self)
-        if dialog.exec():
+        accepted = dialog.exec()
+        if dialog.types_changed:
+            self.refresh_device_types()
+            self.types_changed.emit()
+        if accepted:
             self.reload()
             self.data_changed.emit()
 
@@ -425,7 +436,11 @@ class DevicesPage(QWidget):
         if not ids:
             return
         dialog = BulkEditDialog(self.backend, ids, parent=self)
-        if dialog.exec():
+        accepted = dialog.exec()
+        if dialog.types_changed:
+            self.refresh_device_types()
+            self.types_changed.emit()
+        if accepted:
             QMessageBox.information(self, "批量修改", f"已修改 {dialog.changed} 台设备")
             self.reload()
             self.data_changed.emit()

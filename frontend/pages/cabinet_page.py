@@ -37,6 +37,8 @@ from ..widgets.unracked_list import UnrackedList
 
 class CabinetPage(QWidget):
     data_changed = pyqtSignal()
+    # 在设备对话框里现加了类型，别的页面的下拉和配色要跟上
+    types_changed = pyqtSignal()
 
     def __init__(self, backend: Backend, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -371,23 +373,35 @@ class CabinetPage(QWidget):
         for view in self._views:
             view.set_selected_device(device.id)
 
-    def _on_empty_clicked(self, cabinet_id: int, u_start: int) -> None:
-        dialog = DeviceDialog(
-            self.backend,
-            preset_cabinet_id=cabinet_id,
-            preset_u_start=u_start,
-            parent=self,
-        )
-        if dialog.exec():
+    def _run_device_dialog(self, dialog: DeviceDialog) -> None:
+        """跑设备对话框并按结果刷新。
+
+        类型可能是在框里现加的，那种情况即使点了取消也要通知出去 ——
+        类型已经落库，别的页面的下拉和配色得跟上。
+        """
+        accepted = dialog.exec()
+        if dialog.types_changed:
+            self.types_changed.emit()
+        if accepted:
             self._refresh_after_change()
+
+    def _on_empty_clicked(self, cabinet_id: int, u_start: int) -> None:
+        self._run_device_dialog(
+            DeviceDialog(
+                self.backend,
+                preset_cabinet_id=cabinet_id,
+                preset_u_start=u_start,
+                parent=self,
+            )
+        )
 
     def _open_device_dialog(self, device_id: int | None) -> None:
         preset = None if device_id else self.current_cabinet_id()
-        dialog = DeviceDialog(
-            self.backend, device_id=device_id, preset_cabinet_id=preset, parent=self
+        self._run_device_dialog(
+            DeviceDialog(
+                self.backend, device_id=device_id, preset_cabinet_id=preset, parent=self
+            )
         )
-        if dialog.exec():
-            self._refresh_after_change()
 
     def _copy_device(self, device_id: int) -> None:
         """以这台设备为模板新增一台。副本不带 U 位，先进待上架再拖。"""
@@ -396,9 +410,9 @@ class CabinetPage(QWidget):
         except BackendError as exc:
             QMessageBox.warning(self, "复制失败", str(exc))
             return
-        dialog = DeviceDialog(self.backend, copy_from=draft, parent=self)
-        if dialog.exec():
-            self._refresh_after_change()
+        self._run_device_dialog(
+            DeviceDialog(self.backend, copy_from=draft, parent=self)
+        )
 
     def _on_device_dropped(self, payload: DragPayload, cabinet_id: int, u_start: int) -> None:
         try:
@@ -528,6 +542,9 @@ class CabinetPage(QWidget):
         if dialog.project_edit is not None and reservation.project:
             dialog.project_edit.setText(reservation.project)
         dialog.exec()
+        if dialog.types_changed:
+            self.types_changed.emit()
+        # 预留已经删了，无论保存与否都要刷
         self._refresh_after_change()
 
     def _unrack_device(self, device: Device) -> None:
