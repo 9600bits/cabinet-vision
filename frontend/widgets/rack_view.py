@@ -36,6 +36,17 @@ FOOTER_H = 22
 PAD = 8
 LABEL_W = 26
 
+# 字号一律用像素，跟上面这些几何常量同一套单位。
+# 不能用磅：磅要乘设备 DPI 才变成画布单位，导出 PDF（300 DPI）时
+# 同一个磅值会比屏幕（96 DPI）大 3.1 倍，字直接糊成一团。
+# 这些值是原来的磅值 ×96/72 换算过来的，屏幕上观感不变。
+TITLE_PX = 14      # 机柜名，原 10.5pt
+SUB_PX = 10        # 副标题 / 底部功率承重，原 7.8pt
+SCALE_PX = 9       # U 位刻度数字，原 6.8pt
+RESERVE_PX = 10    # 预留标签，原 7.6pt
+NAME_PX = 10       # 设备名，原 7.8pt
+META_PX = 9        # 设备型号 IP，原 7.0pt
+
 
 @dataclass(slots=True)
 class DragPayload:
@@ -227,7 +238,7 @@ class RackView(QWidget):
 
         # 标题区
         title_font = QFont(painter.font())
-        title_font.setPointSizeF(10.5)
+        title_font.setPixelSize(TITLE_PX)
         title_font.setBold(True)
         painter.setFont(title_font)
         painter.setPen(QPen(QColor(theme.TEXT)))
@@ -236,7 +247,7 @@ class RackView(QWidget):
                          cab.name)
 
         sub_font = QFont(painter.font())
-        sub_font.setPointSizeF(7.8)
+        sub_font.setPixelSize(SUB_PX)
         sub_font.setBold(False)
         painter.setFont(sub_font)
         painter.setPen(QPen(QColor(theme.TEXT_MUTED)))
@@ -245,7 +256,13 @@ class RackView(QWidget):
             f"{place + ' · ' if place else ''}{cab.u_total}U · "
             f"用{self._layout.used_u} 留{self._layout.reserved_u} 空{self._layout.free_u}"
         )
-        painter.drawText(QRect(PAD + 2, 24, width - PAD * 2 - 4, 16),
+        sub_rect = QRect(PAD + 2, 24, width - PAD * 2 - 4, 16)
+        # 机房名一长就放不下。省略中间而不是裁掉尾巴 —— 尾巴上的
+        # 「用x 留y 空z」是这行里最该看见的部分
+        summary = QFontMetrics(sub_font).elidedText(
+            summary, Qt.TextElideMode.ElideMiddle, sub_rect.width()
+        )
+        painter.drawText(sub_rect,
                          int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                          summary)
 
@@ -257,7 +274,7 @@ class RackView(QWidget):
 
         # U 位刻度
         scale_font = QFont(painter.font())
-        scale_font.setPointSizeF(6.8)
+        scale_font.setPixelSize(SCALE_PX)
         painter.setFont(scale_font)
         taken = self._taken_map()
         for index in range(cab.u_total):
@@ -303,7 +320,7 @@ class RackView(QWidget):
 
     def _draw_reservations(self, painter: QPainter) -> None:
         font = QFont(painter.font())
-        font.setPointSizeF(7.6)
+        font.setPixelSize(RESERVE_PX)
         painter.setFont(font)
         for r in self._layout.reservations:
             rect = self._u_rect(r.u_start, r.u_size)
@@ -349,7 +366,7 @@ class RackView(QWidget):
 
     def _draw_device_text(self, painter: QPainter, d: Device, rect: QRect) -> None:
         name_font = QFont(painter.font())
-        name_font.setPointSizeF(7.8)
+        name_font.setPixelSize(NAME_PX)
         name_font.setBold(True)
         two_lines = rect.height() >= 30
 
@@ -371,7 +388,7 @@ class RackView(QWidget):
         if not two_lines:
             return
         meta_font = QFont(painter.font())
-        meta_font.setPointSizeF(7.0)
+        meta_font.setPixelSize(META_PX)
         meta_font.setBold(False)
         painter.setFont(meta_font)
         pen = QPen(QColor(255, 255, 255, 205))
@@ -400,7 +417,7 @@ class RackView(QWidget):
         painter.drawRoundedRect(rect, 3, 3)
 
         font = QFont(painter.font())
-        font.setPointSizeF(7.8)
+        font.setPixelSize(NAME_PX)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QPen(color.darker(130)))
@@ -534,7 +551,7 @@ class RackView(QWidget):
         painter.drawRoundedRect(QRect(0, 0, rect.width(), rect.height()), 3, 3)
         painter.setPen(QPen(QColor("#ffffff")))
         font = QFont(painter.font())
-        font.setPointSizeF(7.8)
+        font.setPixelSize(NAME_PX)
         font.setBold(True)
         painter.setFont(font)
         painter.drawText(

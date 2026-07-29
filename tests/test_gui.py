@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -14,7 +15,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PyQt6.QtCore import QEvent, QPoint, Qt, QTimer  # noqa: E402
-from PyQt6.QtGui import QFont  # noqa: E402
+from PyQt6.QtGui import (  # noqa: E402
+    QFont,
+    QFontMetrics,
+    QFontMetricsF,
+    QImage,
+    QPainter,
+    QPdfWriter,
+)
+from PyQt6.QtPdf import QPdfDocument  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from backend import Backend  # noqa: E402
@@ -34,8 +43,23 @@ from frontend.dialogs import (  # noqa: E402
 )
 from frontend.main_window import NAV_ITEMS, MainWindow  # noqa: E402
 from frontend.widgets.device_table import COLUMNS as DEVICE_COLUMNS  # noqa: E402
-from frontend.widgets.rack_export import export_pdf, export_png  # noqa: E402
-from frontend.widgets.rack_view import DragPayload, RackView  # noqa: E402
+from frontend.widgets.rack_export import (  # noqa: E402
+    CARD_WIDTH,
+    GAP,
+    MARGIN,
+    _build_views,
+    _canvas_size,
+    _stamp_font,
+    _stamp_text,
+    _title_font,
+    export_pdf,
+    export_png,
+)
+from frontend.widgets.rack_view import (  # noqa: E402
+    SCALE_PX,
+    DragPayload,
+    RackView,
+)
 
 PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []
@@ -291,6 +315,157 @@ def _check_drag_cleanup(page, view, app: QApplication) -> None:
         after <= before,
         f"5 个 QDrag 走 deleteLater 后仍剩 {after - before} 个",
     )
+
+
+def _check_export_layout(backend: Backend, tmp: Path) -> None:
+    """导出的排版必须放得下内容。
+
+    修过两个真实问题，这里各自钉住：
+    1. 画布宽度只按机柜求和，机房名一长标题就被裁、还压住导出时间
+    2. 字号用磅、几何用像素，PDF（300 DPI）里字比屏幕大 3.1 倍，
+       糊成一团
+    """
+    cabs = backend.list_cabinets()
+    layouts = [backend.cabinet_layout(c.id) for c in cabs[:1]]
+
+    # 故意用一个长标题，短标题盖不住这个 bug
+    title = "B1-1F-101机房 A01 机柜图（长标题用来验证画布宽度）"
+    views = _build_views(layouts, 22)
+    width, height = _canvas_size(views, title)
+
+    title_w = QFontMetrics(_title_font()).horizontalAdvance(title)
+    stamp_w = QFontMetrics(_stamp_font()).horizontalAdvance(_stamp_text())
+    _check("导出：画布宽度容得下标题和导出时间",
+           width - MARGIN * 2 >= title_w + stamp_w,
+           f"可用 {width - MARGIN * 2} < 需要 {title_w + stamp_w}")
+    _check("导出：画布宽度不小于机柜本身",
+           width >= views[0].width() + MARGIN * 2,
+           f"{width} vs {views[0].width() + MARGIN * 2}")
+
+    # 卡片宽度要和屏幕一致，窄了副标题会被裁
+    _check("导出：卡片宽度与屏幕一致", views[0].width() == CARD_WIDTH,
+           f"{views[0].width()} vs {CARD_WIDTH}")
+
+    # 字号必须与分辨率无关：同一字号在不同 DPI 下行高应当一致
+    heights = []
+    for dpi in (96, 300, 600):
+        writer = QPdfWriter(str(tmp / f"dpi{dpi}.pdf"))
+        writer.setResolution(dpi)
+        probe = QPainter(writer)
+        font = probe.font()
+        font.setPixelSize(SCALE_PX)
+        probe.setFont(font)
+        heights.append(round(QFontMetricsF(probe.font()).height(), 1))
+        probe.end()
+    _check("导出：字号与分辨率无关", len(set(heights)) == 1, str(heights))
+    _check("导出：刻度字放得进 U 位行高", heights[0] <= 22, str(heights[0]))
+
+    # 渲染路径里不该再有磅值调用，否则 PDF 会重新走偏。
+    # 只看真实调用（.setPointSize...(），注释里说明规则的那句不算
+    call = re.compile(r"\.setPointSize[F]?\s*\(")
+    for name in ("rack_view.py", "rack_export.py"):
+        src = (Path(__file__).resolve().parent.parent
+               / "frontend" / "widgets" / name).read_text(encoding="utf-8")
+        hits = call.findall(src)
+        _check(f"导出：{name} 不用磅设字号", not hits, f"还有 {len(hits)} 处调用")
+
+
+def _check_export_pixels(backend: Backend, tmp: Path) -> None:
+    """导出的 PNG 不能有透明区、内容不能贴着右边缘被裁。"""
+    cabs = backend.list_cabinets()
+    layouts = [backend.cabinet_layout(c.id) for c in cabs[:1]]
+    title = "B1-1F-101机房 A01 机柜图（长标题用来验证画布宽度）"
+
+    png = export_png(layouts, tmp / "layout.png", title, 22)
+    img = QImage(str(png))
+    views = _build_views(layouts, 22)
+    width, height = _canvas_size(views, title)
+    _check("导出 PNG：尺寸等于画布 ×2",
+           (img.width(), img.height()) == (width * 2, height * 2),
+           f"{img.width()}x{img.height()} vs {width*2}x{height*2}")
+
+    corners = [(0, 0), (img.width() - 1, 0),
+               (0, img.height() - 1), (img.width() - 1, img.height() - 1)]
+    _check("导出 PNG：四角不透明",
+           all(img.pixelColor(x, y).alpha() == 255 for x, y in corners),
+           str([img.pixelColor(x, y).alpha() for x, y in corners]))
+
+    # 内容右边界要离画布右边留出余量。贴边说明被裁了
+    right = 0
+    for y in range(0, img.height(), 3):
+        for x in range(img.width() - 1, -1, -1):
+            color = img.pixelColor(x, y)
+            if (color.red(), color.green(), color.blue()) != (255, 255, 255):
+                right = max(right, x)
+                break
+    _check("导出 PNG：内容没有贴右边缘（未被裁）",
+           right <= img.width() - 4,
+           f"内容右边界 {right}，画布宽 {img.width()}")
+
+    # PDF 光栅化后和 PNG 比「墨量」。字号要是又按磅算，PDF 里的字
+    # 会大 3 倍多，墨量跟着暴涨 —— 这是那个重叠 bug 最直接的信号
+    pdf = export_pdf(layouts, tmp / "layout.pdf", title, 22)
+    doc = QPdfDocument(None)
+    doc.load(str(pdf))
+    _check("导出 PDF：单页", doc.pageCount() == 1, str(doc.pageCount()))
+
+    size = doc.pagePointSize(0)
+    landscape = size.width() > size.height()
+    _check("导出 PDF：高图用纵向页", not landscape,
+           f"内容 {width}x{height}，页面 {size.width():.0f}x{size.height():.0f}")
+
+    rendered = doc.render(0, (size * 2.0).toSize())
+
+    def ink_ratio(image: QImage) -> float:
+        """非白像素占比。字过大时这个值会明显变高。"""
+        total = 0
+        inked = 0
+        for y in range(0, image.height(), 5):
+            for x in range(0, image.width(), 5):
+                color = image.pixelColor(x, y)
+                if color.alpha() == 0:
+                    continue
+                total += 1
+                if (color.red(), color.green(), color.blue()) != (255, 255, 255):
+                    inked += 1
+        return inked / max(1, total)
+
+    png_ink = ink_ratio(img)
+    pdf_ink = ink_ratio(rendered)
+    # PDF 页面有留白边距，墨量本就略低于 PNG；这里只卡「没有暴涨」
+    _check("导出 PDF：墨量与 PNG 同量级（字号没被放大）",
+           pdf_ink <= png_ink * 1.6,
+           f"PNG {png_ink:.3f} vs PDF {pdf_ink:.3f}")
+
+    # 真正能钉住「字号过大导致重叠」的信号：U 位刻度那一列，
+    # 正常是 42 个分开的数字（行间有空隙），字一大就上下糊成
+    # 连续一片。数「有墨的行段」段数：正常 40+，出 bug 时只有个位数。
+    left = 0
+    for x in range(rendered.width()):
+        if any(
+            rendered.pixelColor(x, y).alpha() != 0
+            and rendered.pixelColor(x, y).red() < 240
+            for y in range(0, rendered.height(), 7)
+        ):
+            left = x
+            break
+
+    bands = 0
+    prev = False
+    for y in range(rendered.height()):
+        inked = False
+        for x in range(left + 10, left + 45):
+            color = rendered.pixelColor(x, y)
+            if color.alpha() == 0:
+                continue
+            if color.red() < 200 and color.green() < 200:
+                inked = True
+                break
+        if inked and not prev:
+            bands += 1
+        prev = inked
+    _check("导出 PDF：U 位刻度逐行分开，没有糊成一片",
+           bands >= 30, f"只数到 {bands} 个行段（正常 40 上下）")
 
 
 def _check_inline_add_type(window: MainWindow, app: QApplication) -> None:
@@ -638,6 +813,9 @@ def run(tmp: Path, app: QApplication) -> None:
     _check("导出 PDF 成功", pdf.exists() and pdf.stat().st_size > 3000, str(pdf.stat().st_size))
     single = export_png(layouts[:1], tmp / "rack_single.png", "单柜图")
     _check("单柜导出 PNG 成功", single.exists() and single.stat().st_size > 3000)
+
+    _check_export_layout(backend, tmp)
+    _check_export_pixels(backend, tmp)
 
     # ---------- 设备台账 ----------
     window.go_to("devices")
