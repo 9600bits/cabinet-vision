@@ -60,6 +60,17 @@ class ReservationRepository:
         )
         return [self.to_reservation(r) for r in rows]
 
+    def list_by_cabinets(self, cabinet_ids: list[int]) -> list[Reservation]:
+        """一次取一批机柜里的预留，整列视图用。"""
+        if not cabinet_ids:
+            return []
+        marks = ",".join("?" * len(cabinet_ids))
+        rows = self.db.query(
+            f"SELECT * FROM reservation WHERE cabinet_id IN ({marks}) ORDER BY u_start DESC",
+            cabinet_ids,
+        )
+        return [self.to_reservation(r) for r in rows]
+
     def get(self, reservation_id: int) -> Reservation | None:
         row = self.db.query_one(self._SELECT + " WHERE rv.id=?", (reservation_id,))
         return self.to_reservation(row) if row else None

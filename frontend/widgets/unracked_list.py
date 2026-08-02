@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -117,7 +117,12 @@ class UnrackedList(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索设备名 / 型号 / 项目")
         self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(lambda _: self.refresh_requested.emit())
+        # 击键别立刻整表查询 + 重建列表，停手 280ms 才刷，和设备台账页一致
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(280)
+        self._search_timer.timeout.connect(self.refresh_requested.emit)
+        self.search.textChanged.connect(lambda _: self._search_timer.start())
         search_row.addWidget(self.search, 1)
         refresh_btn = QPushButton("刷新")
         refresh_btn.clicked.connect(self.refresh_requested.emit)

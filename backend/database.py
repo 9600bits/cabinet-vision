@@ -38,13 +38,20 @@ class Database:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.path), isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode = WAL")
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.execute("PRAGMA synchronous = NORMAL")
         self._depth = 0
-        self.migrate()
+        try:
+            # sqlite3.connect 是惰性的，坏文件在第一条语句（PRAGMA）才报错。
+            # 这里统一转成 BackendError，否则前端只捕 BackendError，
+            # 选了个打不开 / 不是 SQLite 的库文件会一路炸出去闪退。
+            self._conn = sqlite3.connect(str(self.path), isolation_level=None)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode = WAL")
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.execute("PRAGMA synchronous = NORMAL")
+            self.migrate()
+        except sqlite3.Error as exc:
+            # migrate() 自己把迁移错误转成 BackendError，这里只兜连接阶段的错
+            raise BackendError(f"打不开数据库文件「{self.path}」：{exc}") from exc
 
     # ---------- 基础执行 ----------
 

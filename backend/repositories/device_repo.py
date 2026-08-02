@@ -187,6 +187,17 @@ class DeviceRepository:
         )
         return [self.to_device(r) for r in rows]
 
+    def list_by_cabinets(self, cabinet_ids: list[int]) -> list[Device]:
+        """一次取一批机柜里的设备，整列视图用。ORDER BY 保证每柜内顺序不变。"""
+        if not cabinet_ids:
+            return []
+        marks = ",".join("?" * len(cabinet_ids))
+        rows = self.db.query(
+            f"SELECT * FROM device WHERE cabinet_id IN ({marks}) ORDER BY u_start DESC, name",
+            cabinet_ids,
+        )
+        return [self.to_device(r) for r in rows]
+
     def find_by_sn(self, sn: str) -> Device | None:
         row = self.db.query_one("SELECT * FROM device WHERE sn = ?", (sn.strip(),))
         return self.to_device(row) if row else None

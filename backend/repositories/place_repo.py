@@ -184,6 +184,14 @@ class PlaceRepository:
         row = self.db.query_one(self._CAB_SELECT + " WHERE c.id = ?", (cabinet_id,))
         return self.to_cabinet(row) if row else None
 
+    def get_cabinets(self, cabinet_ids: list[int]) -> list[Cabinet]:
+        """一次取一批机柜，整列视图用。空列表直接返回，避免拼出 IN () 语法错。"""
+        if not cabinet_ids:
+            return []
+        marks = ",".join("?" * len(cabinet_ids))
+        rows = self.db.query(self._CAB_SELECT + f" WHERE c.id IN ({marks})", cabinet_ids)
+        return [self.to_cabinet(r) for r in rows]
+
     def find_cabinet_by_name(self, room_id: int, name: str) -> Cabinet | None:
         row = self.db.query_one(
             self._CAB_SELECT + " WHERE c.room_id=? AND c.name=?", (room_id, name.strip())

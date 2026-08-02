@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ..database import Database
 from ..errors import ConflictError, NotFoundError, ValidationError
-from ..models import CabinetLayout, CapacityRow, Reservation, Slot, Stats
+from ..models import CabinetLayout, CapacityRow, Device, Reservation, Slot, Stats
 from ..repositories import DeviceRepository, PlaceRepository, ReservationRepository
 from .occupancy import OccupancyService
 
@@ -61,7 +61,34 @@ class CapacityService:
         )
 
     def layouts(self, cabinet_ids: list[int]) -> list[CabinetLayout]:
-        return [self.cabinet_layout(cid) for cid in cabinet_ids]
+        """整列并排用的批量布局。
+
+        原来是逐柜各发 3 条查询（机柜 / 设备 / 预留），一排 20 个柜就是
+        60 条。现在一次 IN 批量取回三样，内存里按 cabinet_id 分组。
+        """
+        if not cabinet_ids:
+            return []
+        cabinets = {c.id: c for c in self.places.get_cabinets(cabinet_ids)}
+        devices_by_cab: dict[int, list[Device]] = {}
+        for d in self.devices.list_by_cabinets(cabinet_ids):
+            devices_by_cab.setdefault(d.cabinet_id, []).append(d)
+        reservations_by_cab: dict[int, list[Reservation]] = {}
+        for r in self.reservations.list_by_cabinets(cabinet_ids):
+            reservations_by_cab.setdefault(r.cabinet_id, []).append(r)
+
+        result: list[CabinetLayout] = []
+        for cid in cabinet_ids:
+            cabinet = cabinets.get(cid)
+            if cabinet is None:
+                continue  # 列表到布局之间机柜被删了，跳过而不是报错
+            result.append(
+                CabinetLayout(
+                    cabinet=cabinet,
+                    devices=devices_by_cab.get(cid, []),
+                    reservations=reservations_by_cab.get(cid, []),
+                )
+            )
+        return result
 
     def free_slots(self, cabinet_id: int) -> list[Slot]:
         return self.occupancy.free_slots(cabinet_id)
@@ -211,8 +238,11 @@ class CapacityService:
             faulty=one("SELECT COUNT(*) FROM device WHERE status = '故障'"),
             reservations=one("SELECT COUNT(*) FROM reservation"),
             warranty_soon=one(
+                # 只看「今天到 90 天后之间」的；已经过保的不算「即将脱保」，
+                # 不然台账里的过保老设备会一直挂在这个提醒里
                 """SELECT COUNT(*) FROM device
                     WHERE warranty_end IS NOT NULL AND warranty_end <> ''
+                      AND date(warranty_end) >= date('now')
                       AND date(warranty_end) <= date('now', '+90 day')"""
             ),
             by_type=by_type,

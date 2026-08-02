@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self._on_nav_changed)
         layout.addWidget(self.nav, 1)
 
-        version = QLabel("v1.1 · 本地离线")
+        version = QLabel("v1.1.3 · 本地离线")
         version.setObjectName("muted")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version.setContentsMargins(0, 0, 0, 10)
